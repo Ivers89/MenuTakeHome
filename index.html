@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Menu Buddy</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; }
+        .section { margin-bottom: 30px; padding: 20px; border: 1px solid #ccc; border-radius: 5px; }
+        #chat-window { height: 300px; overflow-y: scroll; border: 1px solid #eee; padding: 10px; margin-bottom: 10px; background: #f9f9f9; }
+        .user-msg { color: blue; text-align: right; margin: 5px 0; }
+        .ai-msg { color: green; text-align: left; margin: 5px 0; }
+        .hidden { display: none; }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; text-align: center; }
+        .stat-box { background: #eee; padding: 10px; border-radius: 5px; }
+        .error { color: #b00020; }
+        .tag-chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px; background: #ddd; cursor: pointer; font-size: 0.85em; }
+        .tag-chip.active { background: #333; color: white; }
+        #menu-list li { margin-bottom: 4px; }
+    </style>
+</head>
+<body>
+
+    <h1>Menu Buddy</h1>
+
+    <div class="section" id="upload-section">
+        <h2>1. Upload a Menu</h2>
+        <input type="file" id="menu-image" accept="image/*">
+        <button onclick="uploadMenu()">Upload & Parse</button>
+        <div id="upload-status"></div>
+
+        <h3 class="hidden" id="menu-title">Extracted Items:</h3>
+        <div id="tag-filters"></div>
+        <ul id="menu-list"></ul>
+    </div>
+
+    <div class="section hidden" id="chat-section">
+        <h2>2. Chat with the Menu</h2>
+        <div id="chat-window"></div>
+        <input type="text" id="chat-input" placeholder="e.g., What is vegetarian?" style="width: 70%;">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+
+    <div class="section">
+        <h2>API Analytics & Cost</h2>
+        <div class="stats-grid">
+            <div class="stat-box">Calls: <br><strong id="total-calls">0</strong></div>
+            <div class="stat-box">Tokens: <br><strong id="total-tokens">0</strong></div>
+            <div class="stat-box">Cost: <br>$<strong id="total-cost">0.0000</strong></div>
+            <div class="stat-box">Avg Latency: <br><strong id="avg-latency">0</strong>ms</div>
+        </div>
+        <table id="history-table" style="width:100%; border-collapse: collapse; font-size: 0.85em;">
+            <thead>
+                <tr>
+                    <th style="text-align:left; border-bottom:1px solid #ccc;">Action</th>
+                    <th style="text-align:left; border-bottom:1px solid #ccc;">Model</th>
+                    <th style="text-align:right; border-bottom:1px solid #ccc;">In</th>
+                    <th style="text-align:right; border-bottom:1px solid #ccc;">Out</th>
+                    <th style="text-align:right; border-bottom:1px solid #ccc;">Latency</th>
+                    <th style="text-align:right; border-bottom:1px solid #ccc;">Cost</th>
+                </tr>
+            </thead>
+            <tbody id="history-body"></tbody>
+        </table>
+    </div>
+
+    <script>
+        
+    </script>
+</body>
+</html>
