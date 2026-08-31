@@ -27,8 +27,12 @@ analytics_db: List[dict] = []
 # class Menu(BaseModel):
 #     items: List[MenuItem]
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
 class ChatRequest(BaseModel):
-    messages: List[Dict[str, str]]
+    messages: List[ChatMessage]
 
 MENU_SCHEMA = {
     "type": "object",
@@ -76,8 +80,8 @@ def track_analytics(model: str, usage: int, latency:float, action: str):
 # Main function for uploading menus, interpreting, and saving to db
 @app.post("/menus")
 async def upload_menu(file: UploadFile = File(...)):
-    start_time = time.time()
 
+    start_time = time.time()
     contents = await file.read()
     base64_image = base64.b64encode(contents).decode("utf-8")
 
@@ -103,5 +107,60 @@ async def upload_menu(file: UploadFile = File(...)):
     menus_db[menu_id] = parsed_menu
 
     return {"id": menu_id, "menu": parsed_menu}
+
+@app.post("/menu/{id}/chat")
+async def chat_menu(id: str, chat: ChatRequest):
+    if id not in menus_db:
+        raise HTTPException(status_code=404, detail="Menu Not Found")
+
+    system_prompt = {
+        "role": "system",
+        "content": ( 
+            "You are a helpful waiter. Answer questions using only the menu data. If something isn't on the menu tell the user instead of guessing. \n"
+            f"Use this menu json: {json.dumps(menus_db[id])}"
+        )
+    }    
+
+    input_message = [system_prompt] + [m.model_dump() for m in chat.messages] # model_dumps() converts each List[ChatMessage] back into dict ["role", "content"] 
+
+    start_time = time.time()
+    response = client.responses.create(
+        model = "gpt-4o-mini",
+        input = input_message
+    )
+    latency = time.time() - start_time()
+
+    track_analytics(response.model, response.usage, latency, "Chat")
+
+    reply = response.output_text or "Sorry, I cannot come up with a response right now. Please try again later."
+    return {"reply": reply}
+
+@app.get("/analytics")
+def get_analytics():
+    total_calls = len(analytics_db)
+    if total_calls == 0:
+        return {
+            "totals": {
+                "total_calls": 0,
+                "total_tokens": 0,
+                "total_cost": 0,
+                "avg_latency": 0
+            },
+            "history": [] 
+        } 
+
+    total_tokens = sum(call["input_token"] + call["output_token"] for call in analytics_db)
+    total_cost = sum(call["cost"] for call in analytics_db)
+    avg_latency = sum(call["latency"] for call in analytics_db)/total_calls
+
+    return {
+            "totals": {
+                "total_calls": total_calls,
+                "total_tokens": total_tokens,
+                "total_cost": total_cost,
+                "avg_latency": avg_latency
+            },
+            "history": analytics_db #Return analytics_db since it logs each call. Let's us check analytics by call vs total.
+        } 
 
 
