@@ -14,11 +14,9 @@
         .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; text-align: center; }
         .stat-box { background: #eee; padding: 10px; border-radius: 5px; }
         .error { color: #b00020; }
-        .tag-chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px; background: #ddd; cursor: pointer; font-size: 0.85em; }
-        .tag-chip.active { background: #333; color: white; }
         #menu-list li { margin-bottom: 4px; }
     </style>
-</head>
+</head> 
 <body>
 
     <h1>Menu Buddy</h1>
@@ -30,14 +28,13 @@
         <div id="upload-status"></div>
 
         <h3 class="hidden" id="menu-title">Extracted Items:</h3>
-        <div id="tag-filters"></div>
         <ul id="menu-list"></ul>
     </div>
 
     <div class="section hidden" id="chat-section">
         <h2>2. Chat with the Menu</h2>
         <div id="chat-window"></div>
-        <input type="text" id="chat-input" placeholder="e.g., What is vegetarian?" style="width: 70%;">
+        <input type="text" id="chat-input" placeholder="e.g., What is spicy?" style="width: 70%;">
         <button onclick="sendMessage()">Send</button>
     </div>
 
@@ -65,7 +62,150 @@
     </div>
 
     <script>
-        
+        let currentMenuId = null; // Stores the ID of the currently uploaded menu for session tracking
+        let currentItems = []; // Stores the extracted menu items for the current session
+        let chatHistory = []; // Stores the conversation history for the current menu session
+ 
+        // Uploads the menu image to the backend, processes it, and updates the UI with the extracted menu items.
+        async function uploadMenu() {
+            const fileInput = document.getElementById('menu-image');
+            const statusDiv = document.getElementById('upload-status');
+            statusDiv.className = "";
+ 
+            if (fileInput.files.length === 0) {
+                alert("Please select an image first.");
+                return;
+            }
+ 
+            statusDiv.innerText = "Extracting menu data... (this can take a few seconds)";
+            const formData = new FormData(); // Create a FormData object to prepare the file for backend
+            formData.append("file", fileInput.files[0]);
+ 
+            try { // call the backend endpoint to upload and parse the menu image
+                const response = await fetch(`/menus`, { method: 'POST', body: formData }); 
+                const data = await response.json();
+ 
+                if (!response.ok) {
+                    statusDiv.innerText = data.detail || "Upload failed.";
+                    statusDiv.className = "error";
+                    return;
+                }
+ 
+                currentMenuId = data.id;
+                currentItems = data.menu.menu_items;
+                renderMenuList();
+ 
+                statusDiv.innerText = `Upload complete! Found ${currentItems.length} item(s).`; // Update the status to show how many items were extracted
+                document.getElementById('menu-title').classList.remove('hidden'); // show the extracted items title
+                document.getElementById('chat-section').classList.remove('hidden'); // reveals the chat section for chatting with the menu
+
+                // Reset chat for the new menu
+                chatHistory = [];
+                document.getElementById('chat-window').innerHTML = "";
+ 
+                fetchAnalytics(); 
+            } catch (error) { // Handle any errors that occur during the upload process
+                console.error("Upload failed:", error);
+                statusDiv.innerText = "Error uploading menu.";
+                statusDiv.className = "error";
+            }
+        }
+ 
+        // Renders the list of extracted menu items in the UI.
+         function renderMenuList() {
+            const list = document.getElementById('menu-list');
+            list.innerHTML = "";
+
+            // Create a list item for each menu item and display its name, price, and tags
+            currentItems.forEach(item => {
+                const li = document.createElement('li');
+                const tags = (item.tags || []).join(', ');
+                li.innerText = `${item.name} — $${item.price}${tags ? ' [' + tags + ']' : ''}`;
+                list.appendChild(li);
+            });
+        }
+ 
+        // Sends a message to the backend for processing and updates the chat window with the response.
+        async function sendMessage() {
+            const inputField = document.getElementById('chat-input');
+            const text = inputField.value.trim();
+            if (!text || !currentMenuId) return;
+ 
+            chatHistory.push({ role: "user", content: text }); // add user message to chat history
+            appendMessageToWindow("user", text);
+            inputField.value = "";
+ 
+            try { // Send the chat history to the backend for processing
+                const response = await fetch(`/menus/${currentMenuId}/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ messages: chatHistory })
+                });
+ 
+                const data = await response.json();
+ 
+                if (!response.ok) { 
+                    appendMessageToWindow("assistant", data.detail || "Something went wrong.");
+                    return;
+                }
+ 
+                chatHistory.push({ role: "assistant", content: data.reply }); // add openai response to chat history
+                appendMessageToWindow("assistant", data.reply);
+                fetchAnalytics();
+            } catch (error) {
+                console.error("Chat failed:", error);
+                appendMessageToWindow("assistant", "Error connecting to server.");
+            }
+        }
+ 
+        // Appends a message to the chat window, differentiating between user and assistant messages.
+        function appendMessageToWindow(role, text) {
+            const windowDiv = document.getElementById('chat-window');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = role === 'user' ? 'user-msg' : 'ai-msg'; // Assigns a class based on the role
+            msgDiv.innerText = role === 'user' ? `You: ${text}` : `Buddy: ${text}`; 
+            windowDiv.appendChild(msgDiv);
+            windowDiv.scrollTop = windowDiv.scrollHeight;
+        }
+ 
+        // Updates Analytics by calling from analytics enpoint and updating the UI with the latest stats and history.
+        async function fetchAnalytics() {
+            const response = await fetch(`/analytics`);
+            const data = await response.json();
+ 
+            document.getElementById('total-calls').innerText = data.totals.total_calls;
+            document.getElementById('total-tokens').innerText = data.totals.total_tokens;
+            document.getElementById('total-cost').innerText = data.totals.total_cost.toFixed(6);
+            document.getElementById('avg-latency').innerText = data.totals.avg_latency;
+            renderHistory(data.history);
+        }
+ 
+        // Renders the history of API calls in a table format, showing details like action, model, tokens, latency, and cost.
+        function renderHistory(history) {
+            const body = document.getElementById('history-body');
+            body.innerHTML = "";
+            history.slice().reverse().forEach(h => { // Reverse the history to show the most recent first
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${h.action}</td>
+                    <td>${h.model}</td>
+                    <td style="text-align:right;">${h.input_tokens}</td>
+                    <td style="text-align:right;">${h.output_tokens}</td>
+                    <td style="text-align:right;">${h.latency}ms</td>
+                    <td style="text-align:right;">$${h.cost.toFixed(6)}</td>
+                `;
+                body.appendChild(row);
+            });
+        }
+ 
+        document.getElementById("chat-input").addEventListener("keypress", function (event) {
+            if (event.key === "Enter") {
+                event.preventDefault(); // Prevent the new line when hitting enter in the input field
+                sendMessage();
+            }
+        });
+ 
+        fetchAnalytics();
     </script>
 </body>
 </html>

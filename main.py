@@ -1,13 +1,18 @@
+import base64
+import uuid
+import time
+import json
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from openai import OpenAI
-import base64
-from fastapi import FastAPI, UploadFile, File, HTTPException
-
+from typing import Dict, List, Any
 
 app = FastAPI()
 client = OpenAI()
 
-app.add_middleware(
+app.add_middleware( # Getting around Cross Origin Resource Sharing brower mechanic for local dev 
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
@@ -15,18 +20,10 @@ app.add_middleware(
 )
 
 # Models and DB
-menus_db: Dict[str, dict] = {}
-analytics_db: List[dict] = []
+menus_db: Dict[str, dict] = {} # Stores ID and Parsed Items
+analytics_db: List[dict] = [] # Holds analytics for later retrieval
 
-# Since OpenAI's response format doesn't work like GenAI, this isn't needed but can be used as reference for json schema
-# class MenuItem(BaseModel):
-#     name: str
-#     price: float
-#     tags: List[str]
-
-# class Menu(BaseModel):
-#     items: List[MenuItem]
-
+# Pydantic models for chat messaging
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -34,7 +31,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
 
-MENU_SCHEMA = {
+MENU_SCHEMA = { 
     "type": "object",
     "properties": {
         "menu_items": {
@@ -47,10 +44,10 @@ MENU_SCHEMA = {
                     "tags": {
                         "type": "array",
                         "items": {"type":"string"}
-                    },
-                    "required": ["name", "price", "tags"],
-                    "additionalProperties": False
-                }
+                    }
+                },
+                "required": ["name", "price", "tags"],
+                "additionalProperties": False 
             }
         }
     },
@@ -76,15 +73,18 @@ def track_analytics(model: str, usage: int, latency:float, action: str):
         }
     )
 
+@app.get("/")
+def serve_ui():
+    return FileResponse("index.html")
 
-# Main function for uploading menus, interpreting, and saving to db
+# Main function for uploading menus, parsing the menu using OpenAI, and saving to menus_db
 @app.post("/menus")
 async def upload_menu(file: UploadFile = File(...)):
 
-    start_time = time.time()
     contents = await file.read()
     base64_image = base64.b64encode(contents).decode("utf-8")
 
+    start_time = time.time()
     response = client.responses.create(
         model = "gpt-4o-mini",
         input = [
@@ -96,28 +96,60 @@ async def upload_menu(file: UploadFile = File(...)):
                 ]
             }
         ],
-        text = MENU_SCHEMA
+        text = { # structured output to ensure correct parsed responses.
+            "format": {
+                "type": "json_schema",
+                "name": "menu_schema",
+                "strict": True,
+                "schema": MENU_SCHEMA
+            }
+        }
     )
 
-    latency = time.time()
+    latency = time.time() - start_time
     track_analytics(response.model, response.usage, latency, "Upload")
     
+    raw_text = response.output_text
+
+    # Error Handling in case OpenAI responds with unexpected outputs
+    # Network issues or OpenAI refusal
+    if not raw_text:
+        raise HTTPException(
+            status_code=502,
+            detail="The model returned no content. Try again or use a clearer photo."
+        )
+
+    # In case response JSON isn't valid like output being trunciated early
+    try:
+        parsed_menu = json.loads(raw_text) # Cast into json from output string
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=502,
+            detail="Model output wasn't valid JSON. Try again or use a clearer photo."
+        )
+
+    # No menu items found on image
+    if not parsed_menu.get("menu_items"):
+        raise HTTPException(
+            status_code=422,
+            detail="No menu items were found in that image. Try a clearer or more direct photo of the menu."
+        )
+
     menu_id = str(uuid.uuid4())
-    parsed_menu = json.loads(response.output_text)
     menus_db[menu_id] = parsed_menu
 
     return {"id": menu_id, "menu": parsed_menu}
 
-@app.post("/menu/{id}/chat")
+@app.post("/menus/{id}/chat")
 async def chat_menu(id: str, chat: ChatRequest):
-    if id not in menus_db:
+    if id not in menus_db: # Checks for id match in case browser still has old menu_id before restarting process
         raise HTTPException(status_code=404, detail="Menu Not Found")
 
     system_prompt = {
         "role": "system",
         "content": ( 
             "You are a helpful waiter. Answer questions using only the menu data. If something isn't on the menu tell the user instead of guessing. \n"
-            f"Use this menu json: {json.dumps(menus_db[id])}"
+            f"Use this menu json: {json.dumps(menus_db[id])}" # Converts python objects into Json String
         )
     }    
 
@@ -128,11 +160,11 @@ async def chat_menu(id: str, chat: ChatRequest):
         model = "gpt-4o-mini",
         input = input_message
     )
-    latency = time.time() - start_time()
+    latency = time.time() - start_time
 
     track_analytics(response.model, response.usage, latency, "Chat")
 
-    reply = response.output_text or "Sorry, I cannot come up with a response right now. Please try again later."
+    reply = response.output_text or "Sorry, I cannot come up with a response right now. Please try again later." # If empty response then tell user error
     return {"reply": reply}
 
 @app.get("/analytics")
@@ -149,7 +181,7 @@ def get_analytics():
             "history": [] 
         } 
 
-    total_tokens = sum(call["input_token"] + call["output_token"] for call in analytics_db)
+    total_tokens = sum(call["input_tokens"] + call["output_tokens"] for call in analytics_db)
     total_cost = sum(call["cost"] for call in analytics_db)
     avg_latency = sum(call["latency"] for call in analytics_db)/total_calls
 
@@ -161,6 +193,6 @@ def get_analytics():
                 "avg_latency": avg_latency
             },
             "history": analytics_db #Return analytics_db since it logs each call. Let's us check analytics by call vs total.
-        } 
+        }
 
 
